@@ -1,0 +1,9 @@
+streamlit
+requests
+pyyaml
+pdfplumber
+easyocr
+pdf2image
+pillow
+torch
+numpy
