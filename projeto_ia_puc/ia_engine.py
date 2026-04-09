@@ -1,146 +1,144 @@
-import os
 import json
-import base64
+import os
 import requests
-import streamlit as st
+import base64
 import PyPDF2
 from dotenv import load_dotenv
 
-# Carrega as variáveis do ficheiro .env
+# Carrega as variáveis de ambiente do arquivo .env (onde está sua chave API)
 load_dotenv()
 
+# Pegando a chave do OpenRouter
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-API_URL = "https://openrouter.ai/api/v1/chat/completions".strip()
 
-def processar_nota(arquivo, modelo="nvidia/nemotron-3-nano-30b-a3b:free"):
+def conversar_com_agente(historico_mensagens, contexto_banco_dados):
     """
-    Processa faturas em formato PDF (extração de texto) ou Imagem (visão),
-    devolvendo os dados estruturados em JSON para o compliance.
+    Conecta com a IA via OpenRouter para analisar o banco de dados SQL.
     """
     if not OPENROUTER_API_KEY:
-        st.error("⚠️ Chave do OpenRouter não encontrada! Verifique o seu ficheiro .env.")
-        return None
+        return "⚠️ Erro: A chave 'OPENROUTER_API_KEY' não foi encontrada no arquivo .env. Verifique suas configurações."
+
+    # Prepara as mensagens. A primeira é a instrução de sistema (O cérebro + Dados)
+    mensagens_api = [
+        {"role": "system", "content": contexto_banco_dados}
+    ]
+    
+    # Adiciona o histórico da conversa que veio do Streamlit
+    for msg in historico_mensagens:
+        mensagens_api.append({"role": msg["role"], "content": msg["content"]})
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "google/gemini-2.0-flash-exp:free", # Você pode mudar o modelo padrão de chat aqui
+        "messages": mensagens_api
+    }
 
     try:
-        prompt = """
-        Você é um auditor fiscal automatizado. Analise os dados da Nota Fiscal fornecidos e extraia as informações, 
-        retornando ESTRITAMENTE um formato JSON com a estrutura abaixo. 
-        Não invente dados. Se não achar algo, coloque 0 ou "".
-        
-        {
-            "Fornecedor": "Nome/Razão Social da empresa",
-            "CNPJ": "CNPJ",
-            "Data": "Data de emissão (Formato YYYY-MM-DD)",
-            "itens": [
-                {
-                    "produto": "Descrição do produto",
-                    "quantidade": numero (use ponto para decimais),
-                    "preco_unitario": numero,
-                    "subtotal": numero
-                }
-            ],
-            "valor_total": numero
-        }
-        
-        ATENÇÃO: Retorne APENAS o JSON puro. Não inclua textos como ```json ou explicações.
-        """
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status() # Verifica se deu erro 400 ou 500
+        dados = response.json()
+        return dados['choices'][0]['message']['content']
+    except Exception as e:
+        return f"Desculpe, tive um erro de conexão ao consultar a base de dados: {str(e)}"
 
-        conteudo_mensagem = []
+def extrair_texto_pdf(arquivo):
+    """
+    Lê um arquivo PDF carregado pelo Streamlit e extrai todo o texto.
+    """
+    try:
+        pdf_reader = PyPDF2.PdfReader(arquivo)
+        texto_completo = ""
+        for pagina in pdf_reader.pages:
+            texto_extraido = pagina.extract_text()
+            if texto_extraido:
+                texto_completo += texto_extraido
+        return texto_completo
+    except Exception as e:
+        print(f"Erro ao extrair PDF: {e}")
+        return ""
 
-        # ==========================================
-        # SE FOR PDF: LER TEXTO COM PYPDF2
-        # ==========================================
-        if arquivo.type == "application/pdf":
-            leitor_pdf = PyPDF2.PdfReader(arquivo)
-            texto_extraido = ""
-            for pagina in leitor_pdf.pages:
-                texto_extraido += pagina.extract_text() + "\n"
-            
-            texto_final = prompt + "\n\n--- TEXTO EXTRAÍDO DA NOTA FISCAL ---\n" + texto_extraido
-            
-            conteudo_mensagem = [
-                {"type": "text", "text": texto_final}
-            ]
-            
-        # ==========================================
-        # SE FOR IMAGEM: ENVIAR PARA MODELO DE VISÃO
-        # ==========================================
-        else:
-            file_bytes = arquivo.getvalue()
-            base64_image = base64.b64encode(file_bytes).decode('utf-8')
-            
-            conteudo_mensagem = [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{arquivo.type};base64,{base64_image}"}
-                }
-            ]
+def processar_nota(arquivo, modelo="google/gemini-2.0-flash-exp:free"):
+    """
+    Lê o PDF ou Imagem, envia para a IA e força o retorno em formato JSON estruturado.
+    """
+    if not OPENROUTER_API_KEY:
+        st.error("Chave de API não configurada.")
+        return None
 
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY.strip()}",
-            "Content-Type": "application/json"
-        }
+    # O prompt que obriga a IA a formatar os dados exatamente como nosso banco SQL precisa
+    prompt_extracao = """
+    Você é um extrator de dados de Notas Fiscais.
+    Analise os dados fornecidos e retorne APENAS um arquivo JSON válido, sem textos adicionais, com esta estrutura exata:
+    {
+        "CNPJ": "00.000.000/0000-00",
+        "valor_total": 0.0,
+        "itens": [
+            {
+                "produto": "Nome do Produto",
+                "quantidade": 0,
+                "preco_unitario": 0.0,
+                "subtotal": 0.0
+            }
+        ]
+    }
+    """
+
+    messages = []
+
+    # Se for PDF, extraímos o texto via PyPDF2
+    if arquivo.name.lower().endswith('.pdf'):
+        texto_nf = extrair_texto_pdf(arquivo)
+        messages = [
+            {"role": "system", "content": prompt_extracao},
+            {"role": "user", "content": f"Extraia os dados desta NF:\n\n{texto_nf}"}
+        ]
+    
+    # Se for Imagem, codificamos em Base64 e usamos Visão Computacional
+    elif arquivo.name.lower().endswith(('.png', '.jpg', '.jpeg')):
+        base64_image = base64.b64encode(arquivo.read()).decode('utf-8')
+        messages = [
+            {"role": "system", "content": prompt_extracao},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Extraia os dados desta imagem de Nota Fiscal:"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                ]
+            }
+        ]
+    else:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": modelo,
+        "messages": messages
+    }
+
+    try:
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
         
-        payload = {
-            "model": modelo,
-            "messages": [{"role": "user", "content": conteudo_mensagem}]
-        }
-        
-        response = requests.post(url=API_URL, headers=headers, json=payload)
-        
-        if response.status_code != 200:
-            st.error(f"Erro de comunicação: {response.text}")
-            return None
-            
         resposta_texto = response.json()['choices'][0]['message']['content']
-        texto_limpo = resposta_texto.strip().removeprefix('```json').removesuffix('```').strip()
+
+        # Limpeza para garantir que o Python consiga ler o JSON mesmo se a IA mandar markdown (```json ... ```)
+        resposta_texto = resposta_texto.replace('```json', '').replace('```', '').strip()
         
-        return json.loads(texto_limpo)
+        # Converte a string JSON para um Dicionário Python
+        dados_json = json.loads(resposta_texto)
+        return dados_json
         
-    except Exception as e:
-        st.error(f"Erro interno no processamento da nota: {e}")
+    except json.JSONDecodeError:
+        print("A IA não retornou um JSON válido.")
         return None
-
-
-def conversar_com_agente(historico_chat, contexto_sistema, modelo="nvidia/nemotron-3-nano-30b-a3b:free"):
-    """
-    Função que dá vida ao Agente Logístico, permitindo que converse e analise a operação na Home.
-    """
-    if not OPENROUTER_API_KEY:
-        return "⚠️ Chave de API ausente. Verifique o seu ficheiro .env."
-
-    try:
-        prompt_sistema = f"""
-        Você é o Agente de IA Principal do ERP Logístico da PUC-SP. 
-        REGRA MÁXIMA E ABSOLUTA: Baseie-se APENAS e ESTRITAMENTE nos dados reais fornecidos abaixo. 
-        NÃO invente estatísticas, porcentagens de erro de OCR, falsas rupturas ou problemas imaginários. 
-        Se os dados fornecidos abaixo mostrarem apenas valores e quantidades, limite-se a analisar apenas esses números.
-        
-        DADOS REAIS DA OPERAÇÃO NESTE EXATO MOMENTO:
-        {contexto_sistema}
-        """
-
-        mensagens_formatadas = [{"role": "system", "content": prompt_sistema}]
-        for msg in historico_chat:
-            mensagens_formatadas.append({"role": msg["role"], "content": msg["content"]})
-
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY.strip()}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": modelo,
-            "messages": mensagens_formatadas
-        }
-        
-        response = requests.post(url=API_URL, headers=headers, json=payload)
-        
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            return f"Erro no agente: {response.text}"
-            
     except Exception as e:
-        return f"Erro no cérebro do Agente: {e}"
+        print(f"Erro na API de extração: {e}")
+        return None
