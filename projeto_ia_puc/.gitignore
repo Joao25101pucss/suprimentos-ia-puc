@@ -1,0 +1,30 @@
+# Ambientes Virtuais (Pastas de instalação de bibliotecas)
+venv/
+env/
+.env
+Library/
+Scripts/
+bin/
+Include/
+Lib/
+
+# Cache do Python (Arquivos temporários de compilação)
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Configurações do VS Code e Editores
+.vscode/
+.idea/
+.history/
+*.log
+
+# Banco de Dados Local (Para não subir dados de teste para o GitHub)
+*.json
+*.db
+*.sqlite3
+
+# Arquivos do Sistema Operacional
+Thumbs.db
+.DS_Store
