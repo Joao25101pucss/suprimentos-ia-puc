@@ -1,53 +1,62 @@
+"""
+main.py — ERP Logística Visionary
+Interface principal em Streamlit.
+"""
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import json
-import database
-import ia_engine
+import sqlite3
 from datetime import datetime
 
-# ==========================================
-# CONFIGURAÇÃO INICIAL DA PÁGINA
-# ==========================================
-st.set_page_config(page_title="ERP Logística Autônoma", layout="wide", page_icon="📦")
+import database
+import ia_engine
 
-# ==========================================
-# SETUP DE BANCO DE DADOS AUTOMÁTICO
-# ==========================================
-def setup_inicial():
-    """Garante que a estrutura de dados SQL exista antes do usuário interagir."""
-    database.inicializar_bancos()
-    
-    # 1. Cadastra Hubs Logísticos e Fornecedores
-    database.cadastrar_fornecedor("Frigorífico Norte", "Zona Norte", "Carnes", (-23.50, -46.60))
-    database.cadastrar_fornecedor("Hortifruti Leste", "Zona Leste", "Frutas e Verduras", (-23.54, -46.45))
-    database.cadastrar_fornecedor("Tech Hub Oeste", "Zona Oeste", "Eletrônicos", (-23.53, -46.70))
-    database.cadastrar_fornecedor("Distribuidora Sul", "Zona Sul", "Verduras", (-23.65, -46.68))
-    database.cadastrar_fornecedor("Mercado Central", "Centro", "Geral", (-23.55, -46.63))
-    
-    # 2. Cadastra Catálogo de Produtos (Vinculando ao Fornecedor de Origem)
-    database.cadastrar_produto("Carne Bovina", "Carnes", 35.0, "Frigorífico Norte")
-    database.cadastrar_produto("Frango Inteiro", "Carnes", 15.0, "Frigorífico Norte")
-    database.cadastrar_produto("Pera Fresca", "Frutas e Verduras", 8.5, "Hortifruti Leste")
-    database.cadastrar_produto("Maçã Gala", "Frutas e Verduras", 7.0, "Hortifruti Leste")
-    database.cadastrar_produto("Monitor Gamer", "Eletrônicos", 1200.0, "Tech Hub Oeste")
-    database.cadastrar_produto("Teclado Mecânico", "Eletrônicos", 250.0, "Tech Hub Oeste")
+# ══════════════════════════════════════════════════════
+#  CONFIGURAÇÃO DA PÁGINA
+# ══════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="ERP Logística Visionary",
+    layout="wide",
+    page_icon="📦",
+    initial_sidebar_state="expanded",
+)
 
-setup_inicial()
+# CSS global — pequenos ajustes visuais para deixar o sistema com cara de ERP Profissional
+st.markdown("""
+<style>
+    .block-container { padding-top: 1.5rem; }
+    [data-testid="stSidebar"] { background: #0f172a; }
+    [data-testid="stSidebar"] * { color: #e2e8f0 !important; }
+    [data-testid="stSidebar"] hr { border-color: #334155; }
+    div[data-testid="metric-container"] {
+        background: #1e293b; border-radius: 12px;
+        padding: 16px; border: 1px solid #334155;
+    }
+    div[data-testid="metric-container"] label { color: #94a3b8 !important; font-weight: 600; }
+    div[data-testid="metric-container"] div { color: #f8fafc !important; }
+</style>
+""", unsafe_allow_html=True)
 
-# ==========================================
-# CONTROLE DE ESTADO DA SESSÃO
-# ==========================================
-if "tela_atual" not in st.session_state: 
+
+# ══════════════════════════════════════════════════════
+#  INICIALIZAÇÃO E ESTADO DA SESSÃO
+# ══════════════════════════════════════════════════════
+# Força a criação das tabelas e a injeção dos 100 produtos se o banco estiver vazio
+database.configurar_ambiente()
+
+if "tela_atual" not in st.session_state:
     st.session_state["tela_atual"] = "home"
-if "carrinho_compras" not in st.session_state: 
+if "carrinho_compras" not in st.session_state:
     st.session_state["carrinho_compras"] = []
-if "nota_fiscal_gerada" not in st.session_state: 
+if "nota_fiscal_gerada" not in st.session_state:
     st.session_state["nota_fiscal_gerada"] = None
 
-# ==========================================
-# LÓGICA DE CÁLCULO LOGÍSTICO (CÉREBRO DAS ROTAS)
-# ==========================================
+
+# ══════════════════════════════════════════════════════
+#  FUNÇÕES AUXILIARES LOGÍSTICAS
+# ══════════════════════════════════════════════════════
 def calcular_metricas_item(item, regiao_cliente):
     """Calcula tempo, perda e reembolso baseado na logística de São Paulo."""
     fornecedores = database.obter_fornecedores()
@@ -73,83 +82,111 @@ def calcular_metricas_item(item, regiao_cliente):
     
     return dias, perda_financeira, reembolso_provavel
 
-# ==========================================
-# MENU LATERAL (SIDEBAR)
-# ==========================================
+def cadastrar_produto_local(nome, cat, preco, unid, forn):
+    """Função auxiliar para inserir produtos diretamente no banco de cadastros via Interface."""
+    conn = sqlite3.connect("db_cadastros.db")
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            'INSERT INTO Produtos_Catalogo (nome, categoria, preco_base, unidade, fornecedor_nome) VALUES (?, ?, ?, ?, ?)', 
+            (nome, cat, preco, unid, forn)
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+# ══════════════════════════════════════════════════════
+#  MENU LATERAL (SIDEBAR)
+# ══════════════════════════════════════════════════════
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2760/2760114.png", width=80)
     st.title("📦 ERP Visionary")
     st.markdown("---")
+    
     if st.button("🤖 Torre de Comando", use_container_width=True): 
         st.session_state["tela_atual"] = "home"
     if st.button("📥 Inbound (Auto-Roteamento)", use_container_width=True): 
         st.session_state["tela_atual"] = "inbound"
     if st.button("📤 Outbound (Pedidos & DANFE)", use_container_width=True): 
         st.session_state["tela_atual"] = "outbound"
+    if st.button("🗃️ Cadastros & Catálogo", use_container_width=True): 
+        st.session_state["tela_atual"] = "cadastros"
     if st.button("📊 BI & Dashboard", use_container_width=True): 
         st.session_state["tela_atual"] = "historico"
 
-# ==========================================
-# TELA 1: TORRE DE COMANDO
-# ==========================================
+
+# ══════════════════════════════════════════════════════
+#  TELA 1: TORRE DE COMANDO (CHAT IA)
+# ══════════════════════════════════════════════════════
 if st.session_state["tela_atual"] == "home":
     st.title("🤖 Torre de Comando de Supply Chain")
     st.write("Visão holística ativada. Monitoramento em tempo real do banco de dados relacional SQL.")
     
     if "mensagens_agente" not in st.session_state:
-        st.session_state["mensagens_agente"] = [{"role": "assistant", "content": "Olá! Pode me perguntar sobre as rotas, pedidos roteados e furos logísticos. O que deseja analisar?"}]
+        st.session_state["mensagens_agente"] = [
+            {"role": "assistant", "content": "Olá! O banco está populado com mais de 100 produtos. Pode me perguntar sobre as rotas, fornecedores e furos logísticos."}
+        ]
 
     for msg in st.session_state["mensagens_agente"]:
         with st.chat_message(msg["role"], avatar="🤖" if msg["role"] == "assistant" else "👤"): 
             st.markdown(msg["content"])
 
-    if prompt_usuario := st.chat_input("Ex: Qual o prejuízo da última rota?"):
+    if prompt_usuario := st.chat_input("Ex: Quantos produtos temos no catálogo?"):
         st.session_state["mensagens_agente"].append({"role": "user", "content": prompt_usuario})
         with st.chat_message("user", avatar="👤"): 
             st.markdown(prompt_usuario)
             
         contexto_completo = {
+            "stats": database.obter_estatisticas(),
             "pedidos": database.obter_historico(),
             "fornecedores": database.obter_fornecedores(),
             "catalogo": database.obter_produtos()
         }
         
-        instrucao = f"VOCÊ É O GESTOR LOGÍSTICO. BASE DADOS:\n{json.dumps(contexto_completo, ensure_ascii=False)}"
-        
         with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("Lendo tabelas e relacionamentos SQL via API..."):
-                resposta_ia = ia_engine.conversar_com_agente(st.session_state["mensagens_agente"], instrucao)
+            with st.spinner("Lendo tabelas e relacionamentos SQL via API NVIDIA..."):
+                contexto_ia = ia_engine.construir_contexto_banco(contexto_completo)
+                resposta_ia = ia_engine.conversar_com_agente(st.session_state["mensagens_agente"], contexto_ia)
                 st.markdown(resposta_ia)
         st.session_state["mensagens_agente"].append({"role": "assistant", "content": resposta_ia})
 
-# ==========================================
-# TELA 2: INBOUND (SISTEMA DEDUZ O FORNECEDOR)
-# ==========================================
+
+# ══════════════════════════════════════════════════════
+#  TELA 2: INBOUND (PROCESSAMENTO DE NF)
+# ══════════════════════════════════════════════════════
 elif st.session_state["tela_atual"] == "inbound":
     st.title("📥 Inbound - Processamento Inteligente")
     st.write("A IA lê a nota e descobre a origem cruzando o item com o nosso Catálogo.")
     
     arquivo = st.file_uploader("Upload da NF (PDF/Imagem)", type=["pdf", "png", "jpg", "jpeg"])
     
-    if arquivo and st.button("Processar Documento", type="primary"):
-        with st.spinner("Extraindo dados..."):
+    if arquivo and st.button("Processar Documento e Auditar", type="primary"):
+        with st.spinner("Extraindo dados com Nemotron/Llama Vision..."):
             dados_extraidos = ia_engine.processar_nota(arquivo)
             
             if dados_extraidos:
                 produtos_db = database.obter_produtos()
-                nome_fornecedor = "Desconhecido"
+                nome_fornecedor = "Desconhecido (Requer Cadastro)"
                 
                 if dados_extraidos.get("itens") and len(dados_extraidos["itens"]) > 0:
                     produto_nf = dados_extraidos["itens"][0].get("produto", "")
+                    
                     for p in produtos_db:
-                        if p["nome"].lower() in produto_nf.lower():
+                        if p["nome"].lower() in produto_nf.lower() or produto_nf.lower() in p["nome"].lower():
                             nome_fornecedor = p["fornecedor_nome"]
                             break
                 
                 dados_extraidos["Fornecedor"] = nome_fornecedor
                 st.success(f"🎯 Roteamento Automático: Nota vinculada ao hub **{nome_fornecedor}**")
+                
+                st.subheader("📄 Dados Extraídos")
                 st.json(dados_extraidos)
                 
+                # AUDITORIA FINANCEIRA
                 soma_itens = sum([float(i.get('subtotal', 0)) for i in dados_extraidos.get('itens', [])])
                 valor_total_nf = float(dados_extraidos.get('valor_total', 0))
                 prejuizo = abs(soma_itens - valor_total_nf)
@@ -162,15 +199,19 @@ elif st.session_state["tela_atual"] == "inbound":
                     database.salvar_operacao(dados_extraidos, status="APROVADA")
                     st.balloons()
                 else:
-                    st.error(f"⚠️ Furo encontrado: R$ {prejuizo:,.2f}")
-                    if st.button("Registrar com Divergência"):
+                    st.error(f"⚠️ Alerta de Divergência: Encontrado um furo de R$ {prejuizo:,.2f} nesta nota.")
+                    if st.button("Registrar Operação com Divergência"):
                         dados_extraidos["prejuizo_estimado"] = prejuizo
                         dados_extraidos["tempo_chegada_dias"] = 6
-                        database.salvar_operacao(dados_extraidos, status="BLOQUEADO")
+                        database.salvar_operacao(dados_extraidos, status="BLOQUEADA")
+                        st.warning("Salvo como 'Bloqueada'.")
+            else:
+                st.error("Falha ao extrair os dados da Nota Fiscal. Verifique se o documento está legível.")
 
-# ==========================================
-# TELA 3: OUTBOUND (ROTEAMENTO E DANFE IMPRESSO)
-# ==========================================
+
+# ══════════════════════════════════════════════════════
+#  TELA 3: OUTBOUND (EMISSÃO DE PEDIDOS & DANFE)
+# ══════════════════════════════════════════════════════
 elif st.session_state["tela_atual"] == "outbound":
     st.title("📤 Outbound - Emissão de Pedidos e Roteamento")
     
@@ -201,22 +242,27 @@ elif st.session_state["tela_atual"] == "outbound":
                 st.rerun()
                 
         with col2:
-            st.subheader("📈 Análise de Logística e Risco")
+            st.subheader("📈 Análise Prévia de Logística e Risco")
             if st.session_state["carrinho_compras"]:
                 total_carrinho = 0
                 for item in st.session_state["carrinho_compras"]:
                     dias, perda, reembolso = calcular_metricas_item(item, regiao_destino)
                     total_carrinho += item['subtotal']
-                    st.info(f"**{item['produto']}** -> Fornecedor: {item['fornecedor_origem']}\n\n"
-                            f"⏱️ Lead Time: {dias} dia(s) | 💸 Risco (Perda Est.): R$ {perda:.2f}")
+                    st.info(f"**{item['produto']}** -> Distribuído por: {item['fornecedor_origem']}\n\n"
+                            f"⏱️ Lead Time: {dias} dia(s) | 💸 Risco de Perda: R$ {perda:.2f}")
                 
                 st.markdown(f"### Total Bruto: R$ {total_carrinho:,.2f}")
                 
-                if st.button("Finalizar Pedido e Gerar DANFE", type="primary", use_container_width=True):
+                if st.button("Finalizar Compra e Gerar DANFE", type="primary", use_container_width=True):
                     resumo_pedido = []
                     for item in st.session_state["carrinho_compras"]:
                         d, p, r = calcular_metricas_item(item, regiao_destino)
-                        resumo_pedido.append({**item, "dias_entrega": d, "perda": p, "reembolso": r})
+                        resumo_pedido.append({
+                            **item, 
+                            "dias_entrega": d, 
+                            "perda": p, 
+                            "reembolso": r
+                        })
                     
                     nf = {
                         "id_nf": f"NF-{datetime.now().strftime('%Y%m%d%H%M%S')}",
@@ -231,12 +277,12 @@ elif st.session_state["tela_atual"] == "outbound":
                     st.session_state["carrinho_compras"] = []
                     st.rerun()
             else:
-                st.info("Adicione produtos no carrinho.")
+                st.info("Aguardando produtos no carrinho para calcular rotas.")
     else:
         nf = st.session_state["nota_fiscal_gerada"]
-        st.success("✅ Roteamento concluído e Nota Fiscal Emitida com sucesso no Banco SQL!")
+        st.success("✅ Roteamento concluído e Nota Fiscal Emitida com sucesso no Banco Operacional!")
         
-        # --- SOLUÇÃO: USANDO components.html PARA BLINDAR O CSS E O MARKDOWN ---
+        # --- MÁGICA DO VISUAL DE DOCUMENTO IMPRESSO (DANFE) ---
         linhas_tabela = ""
         for item in nf['itens']:
             linhas_tabela += f"""
@@ -316,7 +362,6 @@ elif st.session_state["tela_atual"] == "outbound":
         </html>
         """
         
-        # Cria um iframe isolado para não conflitar com o tema do Streamlit
         components.html(html_nota_fiscal, height=550, scrolling=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
@@ -324,11 +369,61 @@ elif st.session_state["tela_atual"] == "outbound":
             st.session_state["nota_fiscal_gerada"] = None
             st.rerun()
 
-# ==========================================
-# TELA 4: DASHBOARD HISTÓRICO
-# ==========================================
+
+# ══════════════════════════════════════════════════════
+#  TELA 4: CADASTROS (PRODUTOS E FORNECEDORES)
+# ══════════════════════════════════════════════════════
+elif st.session_state["tela_atual"] == "cadastros":
+    st.title("🗃️ Gestão de Cadastros e Catálogo")
+    st.write("Gerencie os dados mestres do sistema (Master Data).")
+    
+    tab_forn, tab_prod = st.tabs(["🏢 Fornecedores", "📦 Produtos"])
+    
+    with tab_forn:
+        st.subheader("Fornecedores Ativos")
+        fornecedores = database.obter_fornecedores()
+        if fornecedores:
+            df_f = pd.DataFrame(fornecedores).drop(columns=["id", "ativo"], errors="ignore")
+            st.dataframe(df_f, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum fornecedor cadastrado.")
+            
+    with tab_prod:
+        st.subheader("Catálogo de Produtos")
+        prods = database.obter_produtos()
+        if prods:
+            df_p = pd.DataFrame(prods).drop(columns=["id", "ativo", "criado_em"], errors="ignore")
+            st.dataframe(df_p, use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum produto cadastrado.")
+
+        with st.expander("➕ Cadastrar Novo Produto"):
+            fornec_nomes = [f["nome"] for f in database.obter_fornecedores()]
+            with st.form("form_produto"):
+                nome_p  = st.text_input("Nome do Produto")
+                cat_p   = st.text_input("Categoria")
+                preco_p = st.number_input("Preço Base (R$)", min_value=0.01, value=10.00, step=0.5)
+                unid_p  = st.text_input("Unidade (ex: un, kg, sc)", value="un")
+                forn_p  = st.selectbox("Fornecedor (Relacional)", fornec_nomes) if fornec_nomes else st.text_input("Fornecedor")
+                
+                if st.form_submit_button("Salvar no Banco", type="primary"):
+                    if nome_p and forn_p:
+                        sucesso = cadastrar_produto_local(nome_p, cat_p, preco_p, unid_p, forn_p)
+                        if sucesso:
+                            st.success("✅ Produto cadastrado com sucesso! Atualize a página para ver na tabela.")
+                        else:
+                            st.error("⚠️ Erro: Produto já existe ou fornecedor inválido.")
+                    else:
+                        st.error("Informe o nome do produto e do fornecedor.")
+
+
+# ══════════════════════════════════════════════════════
+#  TELA 5: DASHBOARD HISTÓRICO (BI)
+# ══════════════════════════════════════════════════════
 elif st.session_state["tela_atual"] == "historico":
-    st.subheader("📊 Business Intelligence")
+    st.title("📊 Business Intelligence")
+    st.write("Métricas em tempo real extraídas do Banco Operacional.")
+    
     pedidos = database.obter_historico()
     
     if pedidos:
@@ -346,6 +441,6 @@ elif st.session_state["tela_atual"] == "historico":
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Baixar Relatório SQL Completo", data=csv, file_name='db_logistica.csv', mime='text/csv')
+        st.download_button("📥 Baixar Relatório SQL Completo", data=csv, file_name='db_logistica_operacional.csv', mime='text/csv')
     else:
-        st.info("Banco de dados SQLite vazio. Faça movimentações.")
+        st.info("Banco de dados Operacional vazio. Faça movimentações no Inbound ou Outbound.")
