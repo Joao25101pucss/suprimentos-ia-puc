@@ -264,6 +264,112 @@ def render_sidebar(menus):
         if st.button("🚪 Sair", use_container_width=True):
             sair()
 
+# ══════════════════════════════════════════════════════
+#  TELA DE CHAT IA (ARIA) UNIFICADA
+# ══════════════════════════════════════════════════════
+def tela_chat_aria():
+    st.title("💬 Assistente ARIA")
+    st.caption("Sua analista autônoma de supply chain com inteligência artificial.")
+    
+    u = st.session_state["usuario"]
+    perfil = u["perfil"]
+
+    # Mensagens iniciais dinâmicas
+    if st.session_state["chat_msgs"] is None:
+        if perfil == "admin":
+            stats = database.obter_estatisticas()
+            msg = (f"Olá, **{u['nome']}**! Sou **ARIA**, sua analista de logística.\n\n"
+                   f"O banco possui **{stats.get('total_nfs',0)} Notas Fiscais** · "
+                   f"Volume: **R$ {stats.get('volume_total',0):,.2f}**.\n\n"
+                   "Posso analisar tudo no sistema. O que deseja saber?")
+        elif perfil == "cliente":
+            stats = database.obter_estatisticas(filtro_cliente=u["login"])
+            msg = (f"Olá, **{u['nome']}**! Sou **ARIA**. "
+                   f"Você tem **{stats.get('total_nfs',0)} pedidos** registrados.\n\n"
+                   "Posso tirar dúvidas sobre seus pedidos ou produtos do catálogo. Como posso ajudar?")
+        elif perfil == "fornecedor":
+            empresa = u.get("empresa", u["nome"])
+            stats = database.obter_estatisticas(filtro_fornecedor=empresa)
+            msg = (f"Olá, **{u['nome']}**! Sou **ARIA**. "
+                   f"Sua empresa recebeu **{stats.get('total_nfs',0)} pedidos** até o momento.\n\n"
+                   "Como posso ajudar com a sua operação hoje?")
+        
+        st.session_state["chat_msgs"] = [{"role": "assistant", "content": msg}]
+
+    # Renderiza o histórico do chat
+    for msg in st.session_state["chat_msgs"]:
+        with st.chat_message(msg["role"], avatar="🤖" if msg["role"]=="assistant" else "👤"):
+            st.markdown(msg["content"])
+
+    # Entrada do usuário
+    if prompt := st.chat_input("Digite sua pergunta para a ARIA..."):
+        st.session_state["chat_msgs"].append({"role": "user", "content": prompt})
+        with st.chat_message("user", avatar="👤"):
+            st.markdown(prompt)
+
+        # ---------------------------------------------------------
+        # CONSTRUÇÃO DO CONTEXTO FILTRADO (ISOLAMENTO DE DADOS)
+        # ---------------------------------------------------------
+        if perfil == "admin":
+            dados_banco = {
+                "stats":        database.obter_estatisticas(),
+                "pedidos":      database.obter_historico(),
+                "fornecedores": database.obter_fornecedores(),
+                "catalogo":     database.obter_produtos(),
+            }
+            regra_extra = "Você está falando com o ADMINISTRADOR. Responda livremente usando todos os dados."
+        
+        elif perfil == "cliente":
+            dados_banco = {
+                # Puxa APENAS estatísticas e pedidos deste cliente
+                "stats":        database.obter_estatisticas(filtro_cliente=u["login"]),
+                "pedidos":      database.obter_historico(filtro_cliente=u["login"]),
+                "fornecedores": database.obter_fornecedores(), 
+                "catalogo":     database.obter_produtos(),
+            }
+            regra_extra = f"Regra de Ouro: Você está falando com o CLIENTE '{u['nome']}'. Responda APENAS sobre o catálogo e os pedidos DELE. É ESTRITAMENTE PROIBIDO mencionar, inventar ou vazar dados, pedidos ou nomes de outros clientes."
+        
+        elif perfil == "fornecedor":
+            empresa = u.get("empresa", u["nome"])
+            # Fornecedor só vê a si mesmo na lista de fornecedores
+            forns = [f for f in database.obter_fornecedores() if f["nome"] == empresa]
+            dados_banco = {
+                # Puxa APENAS estatísticas, pedidos e catálogo desta empresa
+                "stats":        database.obter_estatisticas(filtro_fornecedor=empresa),
+                "pedidos":      database.obter_historico(filtro_fornecedor=empresa),
+                "fornecedores": forns,
+                "catalogo":     database.obter_produtos_por_fornecedor(empresa),
+            }
+            regra_extra = f"Regra de Ouro: Você está falando com o FORNECEDOR '{empresa}'. Responda APENAS sobre os produtos e pedidos destinados a ELE. É ESTRITAMENTE PROIBIDO mencionar, inventar ou vazar dados de outros fornecedores."
+
+        # Junta o contexto normal com a diretriz de privacidade injetada no fim
+        contexto_base = ia_engine.construir_contexto_banco(dados_banco)
+        contexto_final = f"{contexto_base}\n\n[DIRETRIZ DE SEGURANÇA E PRIVACIDADE]\n{regra_extra}"
+
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner("ARIA analisando..."):
+                resp = ia_engine.conversar_com_agente(st.session_state["chat_msgs"], contexto_final)
+                st.markdown(resp)
+        st.session_state["chat_msgs"].append({"role": "assistant", "content": resp})
+
+    if st.session_state["chat_msgs"] and len(st.session_state["chat_msgs"]) > 1:
+        if st.button("🗑️ Limpar conversa"):
+            st.session_state["chat_msgs"] = None
+            st.rerun()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # ══════════════════════════════════════════════════════
 #  PORTAL CLIENTE
@@ -273,12 +379,15 @@ def portal_cliente():
     render_sidebar([
         ("home",     "🛒  Fazer Pedido"),
         ("pedidos",  "📋  Meus Pedidos"),
+        ("chat",     "💬  Assistente ARIA"), # NOVO MENU AQUI
     ])
 
     tela = st.session_state["tela"]
 
     # ── FAZER PEDIDO ──────────────────────────────────
-    if tela == "home":
+    if tela == "chat":           # NOVO ROTEAMENTO
+        tela_chat_aria()
+    elif tela == "home":
         st.title("🛒 Fazer Novo Pedido")
         st.caption(f"Olá, **{u['nome']}**! Selecione os produtos e finalize seu pedido.")
 
@@ -420,12 +529,14 @@ def portal_fornecedor():
         ("home",      "📬  Pedidos Recebidos"),
         ("catalogo",  "📦  Meu Catálogo"),
         ("inbound",   "📥  Upload NF Entrada"),
+        ("chat",      "💬  Assistente ARIA"), # NOVO MENU AQUI
     ])
 
     tela = st.session_state["tela"]
-
-    # ── PEDIDOS RECEBIDOS ─────────────────────────────
-    if tela == "home":
+    
+    if tela == "chat":           # NOVO ROTEAMENTO
+        tela_chat_aria()
+    elif tela == "home":
         st.title("📬 Pedidos Recebidos")
         st.caption(f"Empresa: **{nome_empresa}** · Gerencie e atualize o status dos pedidos.")
 
@@ -564,8 +675,9 @@ def portal_admin():
 
     tela = st.session_state["tela"]
 
-    # ── TORRE DE COMANDO (CHAT IA) ────────────────────
     if tela == "home":
+        tela_chat_aria()         # CHAMA A FUNÇÃO UNIFICADA
+    elif tela == "dashboard":
         st.title("🤖 Torre de Comando — ARIA")
         st.caption("Analista autônoma de supply chain · Acesso total ao banco de dados SQL.")
 
