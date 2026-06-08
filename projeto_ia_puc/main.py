@@ -10,6 +10,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import json
+import re
 from datetime import datetime
 
 import database
@@ -426,19 +427,6 @@ COMMAND_CREATE_ORDER: {"produto": "Nome Exato", "quantidade": 5, "destino": "Reg
             st.rerun()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ══════════════════════════════════════════════════════
 #  PORTAL CLIENTE
 # ══════════════════════════════════════════════════════
@@ -447,13 +435,13 @@ def portal_cliente():
     render_sidebar([
         ("home",     "🛒  Fazer Pedido"),
         ("pedidos",  "📋  Meus Pedidos"),
-        ("chat",     "💬  Assistente ARIA"), # NOVO MENU AQUI
+        ("chat",     "💬  Assistente ARIA"), 
     ])
 
     tela = st.session_state["tela"]
 
     # ── FAZER PEDIDO ──────────────────────────────────
-    if tela == "chat":           # NOVO ROTEAMENTO
+    if tela == "chat":           
         tela_chat_aria()
     elif tela == "home":
         st.title("🛒 Fazer Novo Pedido")
@@ -597,13 +585,14 @@ def portal_fornecedor():
         ("home",      "📬  Pedidos Recebidos"),
         ("catalogo",  "📦  Meu Catálogo"),
         ("inbound",   "📥  Upload NF Entrada"),
-        ("chat",      "💬  Assistente ARIA"), # NOVO MENU AQUI
+        ("chat",      "💬  Assistente ARIA"),
     ])
 
     tela = st.session_state["tela"]
     
-    if tela == "chat":           # NOVO ROTEAMENTO
+    if tela == "chat":           
         tela_chat_aria()
+    # ── PEDIDOS RECEBIDOS ─────────────────────────────
     elif tela == "home":
         st.title("📬 Pedidos Recebidos")
         st.caption(f"Empresa: **{nome_empresa}** · Gerencie e atualize o status dos pedidos.")
@@ -745,50 +734,7 @@ def portal_admin():
 
     if tela == "home":
         tela_chat_aria()         # CHAMA A FUNÇÃO UNIFICADA
-    elif tela == "dashboard":
-        st.title("🤖 Torre de Comando — ARIA")
-        st.caption("Analista autônoma de supply chain · Acesso total ao banco de dados SQL.")
-
-        if st.session_state["chat_msgs"] is None:
-            stats = database.obter_estatisticas()
-            st.session_state["chat_msgs"] = [{
-                "role": "assistant",
-                "content": (
-                    f"Olá, **{u['nome']}**! Sou **ARIA**, sua analista de logística.\n\n"
-                    f"O banco possui **{stats.get('total_nfs',0)} Notas Fiscais** · "
-                    f"Volume: **R$ {stats.get('volume_total',0):,.2f}** · "
-                    f"Aguardando fornecedor: **{stats.get('aguardando',0)}**.\n\n"
-                    "Posso analisar pedidos, fornecedores, riscos e gargalos. O que deseja saber?"
-                )
-            }]
-
-        for msg in st.session_state["chat_msgs"]:
-            with st.chat_message(msg["role"], avatar="🤖" if msg["role"]=="assistant" else "👤"):
-                st.markdown(msg["content"])
-
-        if prompt := st.chat_input("Ex: Quais fornecedores têm pedidos aguardando confirmação?"):
-            st.session_state["chat_msgs"].append({"role":"user","content":prompt})
-            with st.chat_message("user", avatar="👤"):
-                st.markdown(prompt)
-
-            dados_banco = {
-                "stats":        database.obter_estatisticas(),
-                "pedidos":      database.obter_historico(),
-                "fornecedores": database.obter_fornecedores(),
-                "catalogo":     database.obter_produtos(),
-            }
-            contexto = ia_engine.construir_contexto_banco(dados_banco)
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner("ARIA analisando..."):
-                    resp = ia_engine.conversar_com_agente(st.session_state["chat_msgs"], contexto)
-                    st.markdown(resp)
-            st.session_state["chat_msgs"].append({"role":"assistant","content":resp})
-
-        if st.session_state["chat_msgs"] and len(st.session_state["chat_msgs"]) > 1:
-            if st.button("🗑️ Limpar conversa"):
-                st.session_state["chat_msgs"] = None
-                st.rerun()
-
+        
     # ── DASHBOARD ─────────────────────────────────────
     elif tela == "dashboard":
         st.title("📊 Business Intelligence — Visão Global")
